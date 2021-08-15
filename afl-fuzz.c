@@ -861,6 +861,9 @@ EXP_ST void destroy_queue(void) {
 
   }
 
+  for (u32 i = 0; i < queued_paths; i += 1)
+    ck_free(pareto_queue[i].fn);
+
 }
 
 
@@ -3044,6 +3047,7 @@ static void perform_dry_run(char** argv) {
       if (fd < 0) PFATAL("Unable to create '%s'", fn);
       ck_write(fd, trace_bits + MAP_SIZE, MAP_SIZE * 4, fn);
       close(fd);
+      pareto_queue[current_entry].fn = fn;
     }
 
     current_entry ++;
@@ -3323,6 +3327,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       if (fd < 0) PFATAL("Unable to create '%s'", fn);
       ck_write(fd, trace_bits + MAP_SIZE, MAP_SIZE * 4, fn);
       close(fd);
+      pareto_queue[queued_paths].fn = fn;
     }
 
     add_to_queue(fn, len, 0);
