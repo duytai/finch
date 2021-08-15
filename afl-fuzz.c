@@ -3038,6 +3038,14 @@ static void perform_dry_run(char** argv) {
 
     if (q->var_behavior) WARNF("Instrumentation output varies across runs.");
 
+    {
+      u8* fn = alloc_printf("%s/pareto/id:%06u", out_dir, current_entry);
+      s32 fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+      if (fd < 0) PFATAL("Unable to create '%s'", fn);
+      ck_write(fd, trace_bits + MAP_SIZE, MAP_SIZE * 4, fn);
+      close(fd);
+    }
+
     current_entry ++;
     q = q->next;
 
@@ -3308,6 +3316,14 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
     fn = alloc_printf("%s/queue/id_%06u", out_dir, queued_paths);
 
 #endif /* ^!SIMPLE_FILES */
+
+    {
+      u8* fn = alloc_printf("%s/pareto/id:%06u", out_dir, queued_paths);
+      s32 fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
+      if (fd < 0) PFATAL("Unable to create '%s'", fn);
+      ck_write(fd, trace_bits + MAP_SIZE, MAP_SIZE * 4, fn);
+      close(fd);
+    }
 
     add_to_queue(fn, len, 0);
 
@@ -3900,6 +3916,12 @@ static void maybe_delete_out_dir(void) {
     ck_free(fn);
 
   }
+
+  /* Okay, clean pareto*/
+
+  fn = alloc_printf("%s/pareto", out_dir);
+  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  ck_free(fn);
 
   /* Next, we need to clean up <out_dir>/queue/.state/ subdirectories: */
 
@@ -7303,6 +7325,12 @@ EXP_ST void setup_dirs_fds(void) {
 #endif /* !__sun */
 
   }
+
+  /* Pareto directory */
+
+  tmp = alloc_printf("%s/pareto", out_dir);
+  if (mkdir(tmp, 0700)) PFATAL("Unable to create '%s'", tmp);
+  ck_free(tmp);
 
   /* Queue directory for any starting & discovered paths. */
 
