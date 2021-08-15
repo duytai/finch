@@ -152,7 +152,8 @@ EXP_ST u8* trace_bits;                /* SHM with instrumentation bitmap  */
 
 EXP_ST u8  virgin_bits[MAP_SIZE],     /* Regions yet untouched by fuzzing */
            virgin_tmout[MAP_SIZE],    /* Bits we haven't seen in tmouts   */
-           virgin_crash[MAP_SIZE];    /* Bits we haven't seen in crashes  */
+           virgin_crash[MAP_SIZE],    /* Bits we haven't seen in crashes  */
+           virgin_distances[MAP_SIZE * 4];
 
 static u8  var_bytes[MAP_SIZE];       /* Bytes that appear to be variable */
 
@@ -335,6 +336,13 @@ enum {
   /* 04 */ FAULT_NOINST,
   /* 05 */ FAULT_NOBITS
 };
+
+struct pareto_queue_entry {
+  u8* fn;     /* pareto file name */
+  u32 cnt;    /* number of edges that current entry is the best */
+};
+static struct pareto_queue_entry pareto_queue[MAP_SIZE];
+static u32 pareto_bitmap[MAP_SIZE];
 
 
 /* Get unix time in milliseconds */
@@ -895,16 +903,7 @@ EXP_ST void read_bitmap(u8* fname) {
 
 }
 
-
-/* Check if the current execution path brings anything new to the table.
-   Update virgin bits to reflect the finds. Returns 1 if the only change is
-   the hit-count for a particular tuple; 2 if there are new tuples seen. 
-   Updates the map, so subsequent calls will always return 0.
-
-   This function is called after every exec() on a fairly large buffer, so
-   it needs to be fast. We do this in 32-bit and 64-bit flavors. */
-
-static inline u8 has_new_bits(u8* virgin_map) {
+static inline u8 has_new_bits_1(u8* virgin_map) {
 
 #ifdef WORD_SIZE_64
 
@@ -961,6 +960,123 @@ static inline u8 has_new_bits(u8* virgin_map) {
       *virgin &= ~*current;
 
     }
+
+    current++;
+    virgin++;
+
+  }
+
+  if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
+
+  return ret;
+
+}
+
+
+/* Check if the current execution path brings anything new to the table.
+   Update virgin bits to reflect the finds. Returns 1 if the only change is
+   the hit-count for a particular tuple; 2 if there are new tuples seen. 
+   Updates the map, so subsequent calls will always return 0.
+
+   This function is called after every exec() on a fairly large buffer, so
+   it needs to be fast. We do this in 32-bit and 64-bit flavors. */
+
+static inline u8 has_new_bits(u8* virgin_map) {
+
+#ifdef WORD_SIZE_64
+
+  u32* vit = (u32*) virgin_distances;
+  u32* dit = (u32*) (trace_bits + MAP_SIZE);
+
+  u64* current = (u64*)trace_bits;
+  u64* virgin  = (u64*)virgin_map;
+
+  u32  i = (MAP_SIZE >> 3);
+  u32  pos = 0;
+
+#else
+
+  u32* current = (u32*)trace_bits;
+  u32* virgin  = (u32*)virgin_map;
+
+  u32  i = (MAP_SIZE >> 2);
+
+#endif /* ^WORD_SIZE_64 */
+
+  u8   ret = 0;
+
+  while (i--) {
+
+    /* Optimize for (*current & *virgin) == 0 - i.e., no bits in current bitmap
+       that have not been already cleared from the virgin map - since this will
+       almost always be the case. */
+
+    if (unlikely(*current) && unlikely(*current & *virgin)) {
+
+      if (likely(ret < 2)) {
+
+        u8* cur = (u8*)current;
+        u8* vir = (u8*)virgin;
+
+        /* Looks like we have not found any new bytes yet; see if any non-zero
+           bytes in current[] are pristine in virgin[]. */
+
+#ifdef WORD_SIZE_64
+
+        if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
+            (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff) ||
+            (cur[4] && vir[4] == 0xff) || (cur[5] && vir[5] == 0xff) ||
+            (cur[6] && vir[6] == 0xff) || (cur[7] && vir[7] == 0xff)) ret = 2;
+        else ret = 1;
+
+#else
+
+        if ((cur[0] && vir[0] == 0xff) || (cur[1] && vir[1] == 0xff) ||
+            (cur[2] && vir[2] == 0xff) || (cur[3] && vir[3] == 0xff)) ret = 2;
+        else ret = 1;
+
+#endif /* ^WORD_SIZE_64 */
+
+      }
+
+      *virgin &= ~*current;
+
+    }
+
+#ifdef WORD_SIZE_64
+
+    u32 queue_idx = queue_cycle == 0 ? current_entry : queued_paths;
+    u8* vir = (u8*)virgin;
+
+    for (u32 ii = 0; ii < 8; ii += 1) {
+      u32 cur_edge = pos + ii;
+
+      if (dit[0] < vit[0] && vir[ii] == 0xff) {
+        vit[0] = dit[0];
+        pareto_queue[queue_idx].cnt += 1;
+        /* an input occupies position: pos + ii */
+        if (pareto_bitmap[cur_edge] != 0xffffffff) {
+          pareto_queue[pareto_bitmap[cur_edge]].cnt -= 1;
+        }
+        pareto_bitmap[cur_edge] = queue_idx;
+        if (ret != 2) ret = 1;
+      }
+
+      /* egde is covered */
+      if (vir[ii] != 0xff) {
+        if (pareto_bitmap[cur_edge] != 0xffffffff) {
+          pareto_queue[pareto_bitmap[cur_edge]].cnt -= 1;
+          pareto_bitmap[cur_edge] = 0xffffffff;
+        }
+      }
+
+      dit ++;
+      vit ++;
+    }
+
+    pos += 8;
+
+#endif
 
     current++;
     virgin++;
@@ -1376,8 +1492,10 @@ EXP_ST void setup_shm(void) {
 
   memset(virgin_tmout, 255, MAP_SIZE);
   memset(virgin_crash, 255, MAP_SIZE);
+  memset(virgin_distances, 255, MAP_SIZE * 4);
+  memset(pareto_bitmap, 255, MAP_SIZE * 4);
 
-  shm_id = shmget(IPC_PRIVATE, MAP_SIZE, IPC_CREAT | IPC_EXCL | 0600);
+  shm_id = shmget(IPC_PRIVATE, MAP_SIZE * 5, IPC_CREAT | IPC_EXCL | 0600);
 
   if (shm_id < 0) PFATAL("shmget() failed");
 
@@ -2114,6 +2232,7 @@ EXP_ST void init_forkserver(char** argv) {
                            "allocator_may_return_null=1:"
                            "msan_track_origins=0", 0);
 
+    setenv("SNEU_UC", "1", 0);
     execv(target_path, argv);
 
     /* Use a distinctive bitmap signature to tell the parent about execv()
@@ -2303,6 +2422,7 @@ static u8 run_target(char** argv, u32 timeout) {
      territory. */
 
   memset(trace_bits, 0, MAP_SIZE);
+  memset(trace_bits + MAP_SIZE, 255, MAP_SIZE * 4);
   MEM_BARRIER();
 
   /* If we're running in "dumb" mode, we can't rely on the fork server
@@ -2918,6 +3038,7 @@ static void perform_dry_run(char** argv) {
 
     if (q->var_behavior) WARNF("Instrumentation output varies across runs.");
 
+    current_entry ++;
     q = q->next;
 
   }
@@ -3235,7 +3356,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
         simplify_trace((u32*)trace_bits);
 #endif /* ^WORD_SIZE_64 */
 
-        if (!has_new_bits(virgin_tmout)) return keeping;
+        if (!has_new_bits_1(virgin_tmout)) return keeping;
 
       }
 
@@ -3299,7 +3420,7 @@ keep_as_crash:
         simplify_trace((u32*)trace_bits);
 #endif /* ^WORD_SIZE_64 */
 
-        if (!has_new_bits(virgin_crash)) return keeping;
+        if (!has_new_bits_1(virgin_crash)) return keeping;
 
       }
 
@@ -8093,6 +8214,12 @@ int main(int argc, char** argv) {
     u8 skipped_fuzz;
 
     cull_queue();
+
+    for (u32 x = 0; x < queued_paths; x += 1) {
+      if (pareto_queue[x].cnt > 0) {
+        OKF("[%u] = %u", x, pareto_queue[x].cnt);
+      }
+    }
 
     if (!queue_cur) {
 
