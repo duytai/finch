@@ -8215,12 +8215,6 @@ int main(int argc, char** argv) {
 
     cull_queue();
 
-    for (u32 x = 0; x < queued_paths; x += 1) {
-      if (pareto_queue[x].cnt > 0) {
-        OKF("[%u] = %u", x, pareto_queue[x].cnt);
-      }
-    }
-
     if (!queue_cur) {
 
       queue_cycle++;
@@ -8272,6 +8266,18 @@ int main(int argc, char** argv) {
 
     queue_cur = queue_cur->next;
     current_entry++;
+
+    while (queue_cur && !pareto_queue[current_entry].cnt) {
+
+      if (queue_cur->was_fuzzed) {
+        queue_cur->was_fuzzed = 1;
+        pending_not_fuzzed--;
+        if (queue_cur->favored) pending_favored--;
+      }
+
+      queue_cur = queue_cur->next;
+      current_entry++;
+    }
 
   }
 
