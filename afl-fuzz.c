@@ -5286,6 +5286,30 @@ static u8 fuzz_one(char** argv) {
 
   orig_perf = perf_score = calculate_score(queue_cur);
 
+
+  /*********************
+   * HOT BYTES MUTATION *
+   *********************/
+  {
+    u8* fname = alloc_printf("%s/pareto/id_%06u.l", out_dir, current_entry);
+    s32 fd = open(fname, O_RDONLY);
+
+    if (fd > 0) {
+      u8* tmp_buf = malloc(4 * len);
+      u32* locs = (u32*) tmp_buf;
+
+      ck_read(fd, tmp_buf, 4 * len, fname);
+
+      /* Mutate */
+      PFATAL("HACK");
+
+      close(fd);
+      free(tmp_buf);
+    }
+
+    ck_free(fname);
+  }
+
   /* Skip right away if -d is given, if we have done deterministic fuzzing on
      this entry ourselves (was_fuzzed), or if it has gone through deterministic
      testing in earlier, resumed runs (passed_det). */
