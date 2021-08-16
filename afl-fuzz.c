@@ -37,6 +37,10 @@
 #endif
 #define _FILE_OFFSET_BITS 64
 
+#ifndef SIMPLE_FILES
+#define SIMPLE_FILES
+#endif
+
 #include "config.h"
 #include "types.h"
 #include "debug.h"
@@ -337,13 +341,8 @@ enum {
   /* 05 */ FAULT_NOBITS
 };
 
-struct pareto_queue_entry {
-  u8* fn;     /* pareto file name */
-  u32 cnt;    /* number of edges that current entry is the best */
-};
-static struct pareto_queue_entry pareto_queue[MAP_SIZE];
+static u32 pareto_queue[MAP_SIZE];
 static u32 pareto_bitmap[MAP_SIZE];
-
 
 /* Get unix time in milliseconds */
 
@@ -861,9 +860,6 @@ EXP_ST void destroy_queue(void) {
 
   }
 
-  for (u32 i = 0; i < queued_paths; i += 1)
-    ck_free(pareto_queue[i].fn);
-
 }
 
 
@@ -1056,10 +1052,10 @@ static inline u8 has_new_bits(u8* virgin_map) {
 
       if (dit[0] < vit[0] && vir[ii] == 0xff) {
         vit[0] = dit[0];
-        pareto_queue[queue_idx].cnt += 1;
+        pareto_queue[queue_idx] += 1;
         /* an input occupies position: pos + ii */
         if (pareto_bitmap[cur_edge] != 0xffffffff) {
-          pareto_queue[pareto_bitmap[cur_edge]].cnt -= 1;
+          pareto_queue[pareto_bitmap[cur_edge]] -= 1;
         }
         pareto_bitmap[cur_edge] = queue_idx;
         if (ret != 2) ret = 1;
@@ -1068,7 +1064,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
       /* egde is covered */
       if (vir[ii] != 0xff) {
         if (pareto_bitmap[cur_edge] != 0xffffffff) {
-          pareto_queue[pareto_bitmap[cur_edge]].cnt -= 1;
+          pareto_queue[pareto_bitmap[cur_edge]] -= 1;
           pareto_bitmap[cur_edge] = 0xffffffff;
         }
       }
@@ -3042,12 +3038,12 @@ static void perform_dry_run(char** argv) {
     if (q->var_behavior) WARNF("Instrumentation output varies across runs.");
 
     {
-      u8* fn = alloc_printf("%s/pareto/id:%06u", out_dir, current_entry);
+      u8* fn = alloc_printf("%s/pareto/id_%06u", out_dir, current_entry);
       s32 fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
       if (fd < 0) PFATAL("Unable to create '%s'", fn);
       ck_write(fd, trace_bits + MAP_SIZE, MAP_SIZE * 4, fn);
       close(fd);
-      pareto_queue[current_entry].fn = fn;
+      ck_free(fn);
     }
 
     current_entry ++;
@@ -3322,12 +3318,12 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 #endif /* ^!SIMPLE_FILES */
 
     {
-      u8* fn = alloc_printf("%s/pareto/id:%06u", out_dir, queued_paths);
+      u8* fn = alloc_printf("%s/pareto/id_%06u", out_dir, queued_paths);
       s32 fd = open(fn, O_WRONLY | O_CREAT | O_EXCL, 0600);
       if (fd < 0) PFATAL("Unable to create '%s'", fn);
       ck_write(fd, trace_bits + MAP_SIZE, MAP_SIZE * 4, fn);
       close(fd);
-      pareto_queue[queued_paths].fn = fn;
+      ck_free(fn);
     }
 
     add_to_queue(fn, len, 0);
@@ -3925,7 +3921,7 @@ static void maybe_delete_out_dir(void) {
   /* Okay, clean pareto*/
 
   fn = alloc_printf("%s/pareto", out_dir);
-  if (delete_files(fn, CASE_PREFIX)) goto dir_cleanup_failed;
+  if (delete_files(fn, NULL)) goto dir_cleanup_failed;
   ck_free(fn);
 
   /* Next, we need to clean up <out_dir>/queue/.state/ subdirectories: */
@@ -7927,6 +7923,28 @@ static void save_cmdline(u32 argc, char** argv) {
 
 #ifndef AFL_LIB
 
+void write_pareto() {
+  u8* fname;
+  s32 fd;
+
+  /* Write queue */
+  fname = alloc_printf("%s/pareto/queue", out_dir);
+  fd = open(fname, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0) PFATAL("Unable to open '%s'", fname);
+  ck_write(fd, (u8*) pareto_queue, MAP_SIZE * 4, fname);
+  ck_free(fname);
+  close(fd);
+
+  /* Write bitmap */
+  fname = alloc_printf("%s/pareto/bitmap", out_dir);
+  fd = open(fname, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+  if (fd < 0) PFATAL("Unable to open '%s'", fname);
+  ck_write(fd, pareto_bitmap, MAP_SIZE * 4, fname);
+  ck_free(fname);
+  close(fd);
+
+}
+
 /* Main entry point */
 
 int main(int argc, char** argv) {
@@ -8247,6 +8265,7 @@ int main(int argc, char** argv) {
     u8 skipped_fuzz;
 
     cull_queue();
+    write_pareto();
 
     if (!queue_cur) {
 
@@ -8300,7 +8319,7 @@ int main(int argc, char** argv) {
     queue_cur = queue_cur->next;
     current_entry++;
 
-    while (queue_cur && !pareto_queue[current_entry].cnt) {
+    while (queue_cur && !pareto_queue[current_entry]) {
 
       if (queue_cur->was_fuzzed) {
         queue_cur->was_fuzzed = 1;

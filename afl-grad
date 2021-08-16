@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+
+import time
+import os
+import sys
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.nn._reduction as _Reduction
+from torch.utils.data import TensorDataset, DataLoader
+import numpy as np
+
+class Net(nn.Module):
+    def __init__(self, in_size, out_size):
+        super(Net, self).__init__()
+        layer_size = [in_size, 4096, out_size]
+        self.fc1 = nn.Linear(layer_size[0], layer_size[1])
+        self.fc2 = nn.Linear(layer_size[1], layer_size[2])
+
+    def forward(self, x):
+        x = torch.relu(self.fc1(x))
+        x = torch.sigmoid(self.fc2(x))
+        return x
+
+def predict():
+    max_u32 = (1 << 32) - 1
+    gpu = 0
+    batch_size = 12
+
+    out_dir = "%s/%s" % (os.getcwd(), sys.argv[1])
+    queue_file = '%s/pareto/queue' % out_dir
+    bitmap_file = '%s/pareto/bitmap' % out_dir
+
+    if os.path.exists(queue_file):
+        if os.path.exists(bitmap_file):
+
+            in_files = []
+            label_files = []
+            out_files = []
+            in_sizes = []
+
+            pareto_queue = np.frombuffer(open(queue_file, 'rb').read(), dtype=np.uint32)
+            pareto_bitmap = np.frombuffer(open(bitmap_file, 'rb').read(), dtype=np.uint32)
+            miss_edges = np.where(pareto_bitmap != 0xffffffff)[0]
+
+            for idx, q in enumerate(pareto_queue):
+                if q > 0:
+                    in_file = '%s/queue/id_%06u' %(out_dir, idx)
+                    label_file = '%s/pareto/id_%06u' % (out_dir, idx)
+                    out_file = '%s/pareto/id_%06u.l' %(out_dir, idx)
+                    in_files.append(in_file)
+                    out_files.append(out_file)
+                    label_files.append(label_file)
+                    in_sizes.append(os.path.getsize(in_file))
+
+            inputs = np.zeros((len(in_files), max(in_sizes)))
+            for idx, (in_file, in_size) in enumerate(zip(in_files, in_sizes)):
+                inputs[idx][:in_size] = np.frombuffer(open(in_file, 'rb').read(), dtype=np.uint8)
+
+            labels = np.zeros((len(in_files), miss_edges.size))
+            for idx, label_file in enumerate(label_files):
+                labels[idx] = np.frombuffer(open(label_file, 'rb').read(), dtype=np.uint32)[miss_edges]
+
+            in_norms = inputs / 255.0
+            loss_norms = labels / max_u32
+
+            print("> Network %s => %s" %(inputs.shape, labels.shape));
+            if torch.cuda.is_available():
+                device = torch.device('cuda:%s' % gpu)
+            else:
+                device = torch.device('cpu')
+            net = Net(in_norms[0].size, loss_norms[0].size).double().to(device)
+            loss_fn = torch.nn.BCELoss()
+            optimizer = torch.optim.Adam(net.parameters(), lr=1e-4)
+
+            print("> Start training")
+            xs = torch.tensor(in_norms, device=device)
+            ys = torch.tensor(loss_norms, device=device)
+            data_loader = DataLoader(TensorDataset(xs, ys), batch_size=batch_size, shuffle=True)
+            for epoch in range(1):
+                for data in data_loader:
+                    inputs, labels = data
+                    optimizer.zero_grad()
+                    outputs = net(inputs)
+                    loss = loss_fn(outputs, labels)
+                    loss.backward()
+                    optimizer.step()
+
+            print("> Compute grad")
+            xs = torch.tensor(in_norms, device=device, requires_grad=True)
+            ys = torch.tensor(loss_norms, device=device)
+            data_loader = DataLoader(TensorDataset(xs, ys), batch_size=batch_size, shuffle=True)
+            for data in data_loader:
+                inputs, labels = data
+                optimizer.zero_grad()
+                outputs = net(inputs)
+                loss = loss_fn(outputs, labels)
+                loss.backward()
+
+            grads = xs.grad.cpu().numpy()
+            locs = np.zeros(grads.shape, dtype=np.uint32)
+            for idx, (grad, in_size) in enumerate(zip(grads, in_sizes)):
+                locs[idx][:in_size] = np.abs(grad[:in_size]).argsort()[::-1]
+
+            for in_size, out_file, loc in zip(in_sizes, out_files, locs):
+                loc[:in_size].tofile(out_file)
+
+            os.unlink(queue_file)
+            os.unlink(bitmap_file)
+            print("> OK")
+
+while True:
+    predict()
+    time.sleep(2)
