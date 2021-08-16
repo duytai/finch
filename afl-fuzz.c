@@ -8419,12 +8419,11 @@ int main(int argc, char** argv) {
     queue_cur = queue_cur->next;
     current_entry++;
 
-    while (queue_cur && !pareto_queue[current_entry]) {
+    while (queue_cur && !pareto_queue[current_entry] && !queue_cur->favored) {
 
       if (queue_cur->was_fuzzed) {
         queue_cur->was_fuzzed = 1;
         pending_not_fuzzed--;
-        if (queue_cur->favored) pending_favored--;
       }
 
       queue_cur = queue_cur->next;
