@@ -5370,7 +5370,7 @@ static u8 fuzz_one(char** argv) {
         /* Going down */
         for (step = 0; step < down_step; step += 1) {
           for (i = from; i < to; i ++) {
-            if (out_buf[locs[i]] + signs[i] <= 255 && out_buf[locs[i]] + signs[i] >= 0) {
+            if (out_buf[locs[i]] - signs[i] <= 255 && out_buf[locs[i]] - signs[i] >= 0) {
               out_buf[locs[i]] -= signs[i];
             }
           }
