@@ -5291,23 +5291,99 @@ static u8 fuzz_one(char** argv) {
    * HOT BYTES MUTATION *
    *********************/
   {
-    u8* fname = alloc_printf("%s/pareto/id_%06u.l", out_dir, current_entry);
-    s32 fd = open(fname, O_RDONLY);
+    u32 *locs = NULL, from = 0, to = 0;
+    s32 *signs = NULL, fd;
+    u8* fname;
 
+    fname = alloc_printf("%s/pareto/id_%06u.l", out_dir, current_entry);
+    fd = open(fname, O_RDONLY);
     if (fd > 0) {
       u8* tmp_buf = malloc(4 * len);
-      u32* locs = (u32*) tmp_buf;
-
+      locs = (u32*) tmp_buf;
       ck_read(fd, tmp_buf, 4 * len, fname);
-
-      /* Mutate */
-      PFATAL("HACK");
-
       close(fd);
-      free(tmp_buf);
+      unlink(fname);
+    }
+    ck_free(fname);
+
+    fname = alloc_printf("%s/pareto/id_%06u.s", out_dir, current_entry);
+    fd = open(fname, O_RDONLY);
+    if (fd > 0) {
+      u8* tmp_buf = malloc(4 * len);
+      signs = (s32*) tmp_buf;
+      ck_read(fd, tmp_buf, 4 * len, fname);
+      close(fd);
+      unlink(fname);
+    }
+    ck_free(fname);
+
+    if (signs != NULL && locs != NULL) {
+
+      u32 up_step = 0, down_step = 0, step = 0;
+
+      while (from < len) {
+        to = !from ? 2 : from * 2;
+        if (to >= len) to = len;
+
+        for (i = from; i < to; i ++) {
+
+          u32 loc = locs[i];
+          s32 sign = signs[i];
+          u8 value = out_buf[loc];
+
+          if (sign > 0 && value > down_step) {
+            down_step = value;
+          }
+
+          if (sign < 0 && (255 - value) > down_step) {
+            down_step = 255 - value;
+          }
+
+          if (sign > 0 && (255 - value) > up_step) {
+            up_step = 255 - value;
+          }
+
+          if (sign < 0 && value > up_step) {
+            up_step = value;
+          }
+
+        }
+
+        u8 stage_tmp[128];
+        sprintf(stage_tmp, "hb %u/%u", from, to);
+        stage_name = stage_tmp; 
+        stage_max = up_step + down_step;
+        stage_cur = 0;
+
+        /* Going up */
+        for (step = 0; step < up_step; step += 1) {
+          for (i = from; i < to; i ++) {
+            if (out_buf[locs[i]] + signs[i] <= 255 && out_buf[locs[i]] + signs[i] >= 0) {
+              out_buf[locs[i]] += signs[i];
+            }
+          }
+          if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+          stage_cur ++;
+        }
+        memcpy(out_buf, in_buf, len);
+
+        /* Going down */
+        for (step = 0; step < down_step; step += 1) {
+          for (i = from; i < to; i ++) {
+            if (out_buf[locs[i]] + signs[i] <= 255 && out_buf[locs[i]] + signs[i] >= 0) {
+              out_buf[locs[i]] -= signs[i];
+            }
+          }
+          if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
+          stage_cur ++;
+        }
+        memcpy(out_buf, in_buf, len);
+
+        from = to;
+      }
+
     }
 
-    ck_free(fname);
   }
 
   /* Skip right away if -d is given, if we have done deterministic fuzzing on
