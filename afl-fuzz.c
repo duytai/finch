@@ -341,8 +341,9 @@ enum {
   /* 05 */ FAULT_NOBITS
 };
 
-static u32 pareto_queue[MAP_SIZE];
+static u32 pareto_queue[2 * MAP_SIZE];
 static u32 pareto_bitmap[MAP_SIZE];
+static u8 pareto_changed = 0;
 
 /* Get unix time in milliseconds */
 
@@ -1059,6 +1060,7 @@ static inline u8 has_new_bits(u8* virgin_map) {
         }
         pareto_bitmap[cur_edge] = queue_idx;
         if (ret != 2) ret = 1;
+        pareto_changed = 1;
       }
 
       /* egde is covered */
@@ -3298,6 +3300,8 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
   if (fault == crash_mode) {
 
+    pareto_changed = 0;
+
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
 
@@ -3324,6 +3328,15 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       ck_write(fd, trace_bits + MAP_SIZE, MAP_SIZE * 4, fn);
       close(fd);
       ck_free(fn);
+    }
+
+    if (pareto_changed) {
+      u8* fn = alloc_printf("%s/pareto/bitmap", out_dir);
+      s32 fd = open(fn, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+      if (fd < 0) PFATAL("Unable to open '%s'", fn);
+      ck_write(fd, pareto_bitmap, MAP_SIZE * 4, fn);
+      ck_free(fn);
+      close(fd);
     }
 
     add_to_queue(fn, len, 0);
@@ -8023,28 +8036,6 @@ static void save_cmdline(u32 argc, char** argv) {
 
 #ifndef AFL_LIB
 
-void write_pareto() {
-  u8* fname;
-  s32 fd;
-
-  /* Write queue */
-  fname = alloc_printf("%s/pareto/queue", out_dir);
-  fd = open(fname, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-  if (fd < 0) PFATAL("Unable to open '%s'", fname);
-  ck_write(fd, (u8*) pareto_queue, MAP_SIZE * 4, fname);
-  ck_free(fname);
-  close(fd);
-
-  /* Write bitmap */
-  fname = alloc_printf("%s/pareto/bitmap", out_dir);
-  fd = open(fname, O_WRONLY | O_CREAT | O_TRUNC, 0600);
-  if (fd < 0) PFATAL("Unable to open '%s'", fname);
-  ck_write(fd, pareto_bitmap, MAP_SIZE * 4, fname);
-  ck_free(fname);
-  close(fd);
-
-}
-
 /* Main entry point */
 
 int main(int argc, char** argv) {
@@ -8365,7 +8356,6 @@ int main(int argc, char** argv) {
     u8 skipped_fuzz;
 
     cull_queue();
-    write_pareto();
 
     if (!queue_cur) {
 
