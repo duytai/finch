@@ -5311,9 +5311,8 @@ static u8 fuzz_one(char** argv) {
     fname = alloc_printf("%s/pareto/id_%06u.l", out_dir, current_entry);
     fd = open(fname, O_RDONLY);
     if (fd > 0) {
-      u8* tmp_buf = ck_alloc(4 * len);
-      locs = (u32*) tmp_buf;
-      ck_read(fd, tmp_buf, 4 * len, fname);
+      locs = (u32*) ck_alloc(4 * len);
+      ck_read(fd, (u8*) locs, 4 * len, fname);
       close(fd);
       unlink(fname);
     }
@@ -5322,9 +5321,8 @@ static u8 fuzz_one(char** argv) {
     fname = alloc_printf("%s/pareto/id_%06u.s", out_dir, current_entry);
     fd = open(fname, O_RDONLY);
     if (fd > 0) {
-      u8* tmp_buf = ck_alloc(4 * len);
-      signs = (s32*) tmp_buf;
-      ck_read(fd, tmp_buf, 4 * len, fname);
+      signs = (s32*) ck_alloc(4 * len);
+      ck_read(fd, (u8*) signs, 4 * len, fname);
       close(fd);
       unlink(fname);
     }
@@ -5334,22 +5332,6 @@ static u8 fuzz_one(char** argv) {
 
       u32 up_step = 0, down_step = 0, step = 0;
 
-      stage_name = "hb 1";
-      stage_max = (len > 64 ? 64 : len) * 255;
-      stage_cur = 0;
-
-      /* Single bytes */
-      for (i = 0; i < 64 && i < len; i += 1) {
-        u8 tmp = out_buf[locs[i]];
-        for (step = 0; step < 255; step ++) {
-          out_buf[locs[i]] = step;
-          if (common_fuzz_stuff(argv, out_buf, len)) goto abandon_entry;
-          stage_cur ++;
-        }
-        out_buf[locs[i]] = tmp;
-      }
-
-      /* Multiple bytes */
       while (from < len) {
         to = !from ? 2 : from * 2;
         if (to >= len) to = len;
