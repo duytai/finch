@@ -76,7 +76,7 @@ if os.path.exists(bitmap_file):
     xs = torch.tensor(in_norms, device=device)
     ys = torch.tensor(loss_norms, device=device)
     data_loader = DataLoader(TensorDataset(xs, ys), batch_size=batch_size, shuffle=True)
-    for epoch in tqdm(range(10)):
+    for epoch in range(100):
         for data in data_loader:
             inputs, labels = data
             optimizer.zero_grad()
@@ -107,3 +107,4 @@ if os.path.exists(bitmap_file):
     for in_size, loc_file, sign_file, loc, sign in zip(in_sizes, loc_files, sign_files, locs, signs):
         loc[:in_size].tofile(loc_file)
         sign[:in_size].tofile(sign_file)
+    print("> Done")
