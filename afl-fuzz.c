@@ -341,7 +341,7 @@ enum {
   /* 05 */ FAULT_NOBITS
 };
 
-static u32 pareto_queue[2 * MAP_SIZE];
+static u32 pareto_queue[MAP_SIZE];
 static u32 pareto_bitmap[MAP_SIZE];
 static u8 pareto_changed = 0;
 
@@ -5163,6 +5163,8 @@ static u8 fuzz_one(char** argv) {
   u8  *in_buf, *out_buf, *orig_in, *ex_tmp, *eff_map = 0;
   u64 havoc_queued,  orig_hit_cnt, new_hit_cnt;
   u32 splice_cycle = 0, perf_score = 100, orig_perf, prev_cksum, eff_cnt = 1;
+  u32 *locs;
+  s32 *signs;
 
   u8  ret_val = 1, doing_det = 0;
 
@@ -5232,6 +5234,8 @@ static u8 fuzz_one(char** argv) {
      benefits. */
 
   out_buf = ck_alloc_nozero(len);
+  signs = ck_alloc_nozero(4 * len);
+  locs = ck_alloc_nozero(4 * len);
 
   subseq_tmouts = 0;
 
@@ -5304,31 +5308,31 @@ static u8 fuzz_one(char** argv) {
    * HOT BYTES MUTATION *
    *********************/
   {
-    u32 *locs = NULL, from = 0, to = 0;
-    s32 *signs = NULL, fd;
+    u32 from = 0, to = 0, found = 0;
+    s32 fd;
     u8* fname;
 
     fname = alloc_printf("%s/pareto/id_%06u.l", out_dir, current_entry);
     fd = open(fname, O_RDONLY);
     if (fd > 0) {
-      locs = (u32*) ck_alloc(4 * len);
       ck_read(fd, (u8*) locs, 4 * len, fname);
       close(fd);
       unlink(fname);
+      found ++;
     }
     ck_free(fname);
 
     fname = alloc_printf("%s/pareto/id_%06u.s", out_dir, current_entry);
     fd = open(fname, O_RDONLY);
     if (fd > 0) {
-      signs = (s32*) ck_alloc(4 * len);
       ck_read(fd, (u8*) signs, 4 * len, fname);
       close(fd);
       unlink(fname);
+      found ++;
     }
     ck_free(fname);
 
-    if (signs != NULL && locs != NULL) {
+    if (found == 2) {
 
       u32 up_step = 0, down_step = 0, step = 0;
 
@@ -5395,10 +5399,10 @@ static u8 fuzz_one(char** argv) {
         from = to;
       }
 
-      ck_free(locs);
-      ck_free(signs);
     }
 
+    ck_free(locs);
+    ck_free(signs);
   }
 
   /* Skip right away if -d is given, if we have done deterministic fuzzing on
