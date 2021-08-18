@@ -343,7 +343,6 @@ enum {
 
 static u32 pareto_queue[MAP_SIZE];
 static u32 pareto_bitmap[MAP_SIZE];
-static u8 pareto_changed = 0;
 
 /* Get unix time in milliseconds */
 
@@ -1060,7 +1059,6 @@ static inline u8 has_new_bits(u8* virgin_map) {
         }
         pareto_bitmap[cur_edge] = queue_idx;
         if (ret != 2) ret = 1;
-        pareto_changed = 1;
       }
 
       /* egde is covered */
@@ -3300,8 +3298,6 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
 
   if (fault == crash_mode) {
 
-    pareto_changed = 0;
-
     /* Keep only if there are new bits in the map, add to queue for
        future fuzzing, etc. */
 
@@ -3330,7 +3326,7 @@ static u8 save_if_interesting(char** argv, void* mem, u32 len, u8 fault) {
       ck_free(fn);
     }
 
-    if (pareto_changed) {
+    {
       u8* fn = alloc_printf("%s/pareto/bitmap", out_dir);
       s32 fd = open(fn, O_WRONLY | O_CREAT | O_TRUNC, 0600);
       if (fd < 0) PFATAL("Unable to open '%s'", fn);
@@ -5308,6 +5304,7 @@ static u8 fuzz_one(char** argv) {
    * HOT BYTES MUTATION *
    *********************/
   {
+    static u8 stage_tmp[128];
     u32 from = 0, to = 0, found = 0;
     s32 fd;
     u8* fname;
@@ -5364,7 +5361,6 @@ static u8 fuzz_one(char** argv) {
 
         }
 
-        u8 stage_tmp[128];
         sprintf(stage_tmp, "hb %u/%u", from, to);
         stage_name = stage_tmp; 
         stage_max = up_step + down_step;
