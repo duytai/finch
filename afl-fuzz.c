@@ -343,6 +343,8 @@ enum {
 
 static u32 pareto_queue[MAP_SIZE];
 static u32 pareto_bitmap[MAP_SIZE];
+static u32 __queue[MAP_SIZE];
+static u32 __bitmap[MAP_SIZE];
 
 /* Get unix time in milliseconds */
 
@@ -993,6 +995,9 @@ static inline u8 has_new_bits(u8* virgin_map) {
   u32  i = (MAP_SIZE >> 3);
   u32  pos = 0;
 
+  memcpy(__queue, pareto_queue, MAP_SIZE * 4);
+  memcpy(__bitmap, pareto_bitmap, MAP_SIZE * 4);
+
 #else
 
   u32* current = (u32*)trace_bits;
@@ -1061,11 +1066,23 @@ static inline u8 has_new_bits(u8* virgin_map) {
         if (ret != 2) ret = 1;
       }
 
+      if (dit[0] <= vit[0] && vit[0] != 0xffffffff && vir[ii] == 0xff) {
+        __queue[queue_idx] += 1;
+        if (__bitmap[cur_edge] != 0xffffffff) {
+          __queue[__bitmap[cur_edge]] -= 1;
+        }
+        __bitmap[cur_edge] = queue_idx;
+      }
+
       /* egde is covered */
       if (vir[ii] != 0xff) {
         if (pareto_bitmap[cur_edge] != 0xffffffff) {
           pareto_queue[pareto_bitmap[cur_edge]] -= 1;
           pareto_bitmap[cur_edge] = 0xffffffff;
+        }
+        if (__bitmap[cur_edge] != 0xffffffff) {
+          __queue[__bitmap[cur_edge]] -= 1;
+          __bitmap[cur_edge] = 0xffffffff;
         }
       }
 
@@ -1083,9 +1100,20 @@ static inline u8 has_new_bits(u8* virgin_map) {
   }
 
   if (ret && virgin_map == virgin_bits) bitmap_changed = 1;
+  if (!ret) {
+    u32 pareto_found = 0;
+    u32 __found = 0;
+    for (u32 i = 0; i < queued_paths + 1; i ++) {
+      if (pareto_queue[i] > 0) pareto_found ++;
+      if (__queue[i] > 0) __found++;
+    }
+    if (__found < pareto_found) {
+      memcpy(pareto_queue, __queue, MAP_SIZE * 4);
+      memcpy(pareto_bitmap, __bitmap, MAP_SIZE * 4);
+    }
+  }
 
   return ret;
-
 }
 
 
@@ -3064,6 +3092,15 @@ static void perform_dry_run(char** argv) {
     if (cal_failures * 5 > queued_paths)
       WARNF(cLRD "High percentage of rejected test cases, check settings!");
 
+  }
+
+  {
+    u8* fn = alloc_printf("%s/pareto/bitmap", out_dir);
+    s32 fd = open(fn, O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) PFATAL("Unable to open '%s'", fn);
+    ck_write(fd, pareto_bitmap, MAP_SIZE * 4, fn);
+    ck_free(fn);
+    close(fd);
   }
 
   OKF("All test cases processed.");
@@ -8411,8 +8448,9 @@ int main(int argc, char** argv) {
     queue_cur = queue_cur->next;
     current_entry++;
 
-    while (queue_cur && !pareto_queue[current_entry] && !queue_cur->favored) {
+    while (queue_cur && !pareto_queue[current_entry]) {
 
+      if (queue_cur->favored && !queue_cur->was_fuzzed) break;
       if (!queue_cur->was_fuzzed) {
         queue_cur->was_fuzzed = 1;
         pending_not_fuzzed--;

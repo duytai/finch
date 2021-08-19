@@ -39,6 +39,7 @@ while 1:
             loc_files = []
             sign_files = []
             in_sizes = []
+            over_size = 0
 
             pareto_bitmap = np.frombuffer(open(bitmap_file, 'rb').read(), dtype=np.uint32)
             miss_edges = np.where(pareto_bitmap != 0xffffffff)[0]
@@ -48,7 +49,17 @@ while 1:
                 label_file = '%s/pareto/id_%06u' % (out_dir, q)
                 loc_file = '%s/pareto/id_%06u.l' % (out_dir, q)
                 sign_file = '%s/pareto/id_%06u.s' % (out_dir, q)
-                if os.path.getsize(in_file) > 10000: continue
+
+                if os.path.getsize(in_file) > 10000:
+                    in_size = os.path.getsize(in_file)
+                    loc = np.arange(in_size, dtype=np.uint32)
+                    np.random.shuffle(loc)
+                    sign = np.random.choice([1, 0, -1], in_size).astype(np.int32)
+                    loc.tofile(loc_file)
+                    sign.tofile(sign_file)
+                    over_size += 1
+                    continue
+
                 in_files.append(in_file)
                 loc_files.append(loc_file)
                 label_files.append(label_file)
@@ -66,6 +77,7 @@ while 1:
             in_norms = inputs / 255.0
             loss_norms = labels / max_u32
 
+            print("> Over size %u" % over_size)
             print("> Network %s => %s" %(inputs.shape, labels.shape));
             if torch.cuda.is_available():
                 device = torch.device('cuda:%s' % gpu)
@@ -111,4 +123,3 @@ while 1:
                 loc[:in_size].tofile(loc_file)
                 sign[:in_size].tofile(sign_file)
             print("> Done")
-    time.sleep(120)
